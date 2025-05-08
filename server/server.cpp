@@ -1,6 +1,7 @@
 #include "server.h"
 #include <spdlog/spdlog.h>
 #include <steam/steamnetworkingtypes.h> // For SteamNetworkingIPAddr
+#include <steam/isteamgameserver.h>
 #include <chrono> // For std::this_thread::sleep_for
 
 constexpr uint32 MAX_MESSAGES_PER_POLL_SERVER = 32;
@@ -36,7 +37,8 @@ bool Server::InitializeSteam(uint16_t usGamePort, uint16_t usQueryPort, const ch
     // Let's use DEFAULT_SERVER_PORT for our listen socket.
     // For SteamGameServer_Init, if not using master server, ports can be nominal.
     // Mod name should be your game's directory name.
-    if (!SteamGameServer_Init(0, usGamePort, usQueryPort, EServerMode::eServerModeAuthenticationAndSecure, pchVersionString)) {
+    static constexpr uint32 INADDR_ANY = 0;
+    if (!SteamGameServer_Init(INADDR_ANY, usGamePort, usQueryPort, EServerMode::eServerModeAuthenticationAndSecure, pchVersionString)) {
         spdlog::error("Server: SteamGameServer_Init failed. Is steam_appid.txt present and valid?");
         return false;
     }
@@ -50,9 +52,11 @@ bool Server::InitializeSteam(uint16_t usGamePort, uint16_t usQueryPort, const ch
     }
 
     // Set server name, map, etc. (optional for this example, but good practice for real servers)
-    SteamGameServer()->SetModDir("SteamworksMinimalServer"); // Example value
-    SteamGameServer()->SetProduct("MyAwesomeGame");      // Example value
-    SteamGameServer()->SetGameDescription("Minimal Steamworks Server Example"); // Example
+    SteamGameServer()->SetModDir("SteamworksMinimalServer");
+    SteamGameServer()->SetProduct("MyAwesomeGame");
+    SteamGameServer()->SetGameDescription("Minimal Steamworks Server Example");
+    SteamGameServer()->SetDedicatedServer(true);
+    SteamGameServer()->SetAdvertiseServerActive(true);
     SteamGameServer()->LogOnAnonymous(); // Or SteamGameServer()->LogOn( "YOUR_SERVER_TOKEN_HERE" ); for GSLT
 
     // Create a listen socket
@@ -98,7 +102,11 @@ void Server::ShutdownSteam() {
     if (!m_bRunning) return;
     m_bRunning = false;
 
-    if (m_networkPollThread.joinable()) {
+    // Notify Steam master server we are going offline
+    SteamGameServer()->SetAdvertiseServerActive(false);
+
+    if (m_networkPollThread.joinable())
+    {
         m_networkPollThread.join();
     }
 
