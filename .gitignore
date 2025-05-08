@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+build
+steamworks*
+steam_appid.txt
