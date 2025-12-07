@@ -78,6 +78,6 @@ The server will log when it starts listening. The client will attempt to connect
 ## Notes
 
 * This example uses `ISteamNetworkingSockets` for communication and `BeginAuthSession`/`EndAuthSession` for ticket-based authentication. It does not use the older P2P networking or P2P auth.
-* The server listens on virtual port 1234 by default. The client connects to `127.0.0.1` on this port. These can be changed in the source code.
+* The server listens on virtual port 42000 by default. The client connects to `127.0.0.1` on this port. These can be changed in the source code.
 * Ensure the Steam client is running and you are logged in.
 * This is a minimal example. Robust error handling, message framing, and application logic are beyond its scope.

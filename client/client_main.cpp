@@ -7,9 +7,24 @@
 #include <chrono>
 
 const char* SERVER_ADDRESS = "127.0.0.1"; // Or your server's IP
-const uint16 SERVER_PORT = 1234;       // Match server's listening port
+const uint16 SERVER_PORT = 42000;         // Match server's listening port
 
-int main() {
+void ReadCin(std::atomic<bool>& run)
+{
+    std::string buffer;
+
+    while (run.load())
+    {
+        std::cin >> buffer;
+        if (buffer == "quit")
+        {
+            run.store(false);
+        }
+    }
+}
+
+int main()
+{
     // Setup spdlog
     try {
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -23,6 +38,8 @@ int main() {
         return 1;
     }
 
+    std::atomic<bool> run(true);
+    std::thread cinThread(ReadCin, std::ref(run));
     Client client;
 
     if (!client.InitializeSteam()) {
@@ -38,11 +55,9 @@ int main() {
 
     spdlog::info("Client: Main loop started. Type 'quit' to exit, 'msg <message>' to send.");
 
-    bool running = true;
-    std::string line;
-
     // Main loop: run Steam callbacks and check for user input
-    while (running && (client.IsConnected() || client.IsAttemptingConnection()) ) { // Use m_bAttemptingConnection to keep running while trying
+    while (run.load() && (client.IsConnected() || client.IsAttemptingConnection()) )
+    { // Use m_bAttemptingConnection to keep running while trying
         client.RunCallbacks(); // Process Steam API callbacks
 
         // Non-blocking input check (simple version)
@@ -61,39 +76,13 @@ int main() {
         //    // client.SendMessageToServer("PING"); // Be careful not to spam
         // }
     }
+    run.store(false);
+    cinThread.join();
     
     // If loop exited because connection dropped or never established fully
     if (!client.IsConnected() && !client.IsAttemptingConnection()) {
          spdlog::info("Client: Disconnected or failed to connect.");
     }
-
-
-    // Manual quit for demo purposes
-    std::cout << "Enter 'quit' to shutdown client, or wait for disconnection:" << std::endl;
-    while(running) {
-        client.RunCallbacks(); // Keep processing callbacks
-        // A more robust input method would be better here
-        if (std::cin.peek() != EOF && std::cin.rdbuf()->in_avail() > 0) { // Check if there's input
-            std::getline(std::cin, line);
-            if (line == "quit") {
-                spdlog::info("Client: 'quit' command received. Shutting down.");
-                running = false;
-            } else if (line.rfind("msg ", 0) == 0) {
-                if (client.IsConnected()) {
-                    std::string msg_to_send = line.substr(4);
-                    client.SendMessageToServer(msg_to_send);
-                } else {
-                    spdlog::warn("Client: Not connected. Cannot send message.");
-                }
-            }
-        }
-        if (!client.IsConnected() && !client.IsAttemptingConnection()) {
-            spdlog::info("Client: Connection lost. Exiting input loop.");
-            break; 
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
 
     spdlog::info("Client: Shutting down...");
     client.Disconnect(); // Explicitly disconnect

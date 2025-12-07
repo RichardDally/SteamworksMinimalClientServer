@@ -26,8 +26,7 @@ public:
     bool IsAttemptingConnection() const;
 
 private:
-    void OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pCallback);
-    STEAM_CALLBACK(Client, SteamNetConnectionStatusChanged, SteamNetConnectionStatusChangedCallback_t);
+    STEAM_CALLBACK(Client, OnSteamNetConnectionStatusChanged, SteamNetConnectionStatusChangedCallback_t);
 
     void PollIncomingMessages();
     void ProcessMessage(const uint8* data, uint32 size);

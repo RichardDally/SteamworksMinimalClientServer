@@ -5,7 +5,56 @@
 #include <chrono> // For std::this_thread::sleep_for
 
 constexpr uint32 MAX_MESSAGES_PER_POLL_SERVER = 32;
-constexpr uint16 DEFAULT_SERVER_PORT = 1234; // Same as client attempts to connect to
+constexpr uint16 DEFAULT_SERVER_PORT = 42000; // Same as client attempts to connect to
+
+namespace
+{
+    static const char* ConnectionStateToString(const ESteamNetworkingConnectionState eState)
+    {
+        switch (eState)
+        {
+            case k_ESteamNetworkingConnectionState_None: return "None (0)";
+            case k_ESteamNetworkingConnectionState_Connecting: return "Connecting (1)";
+            case k_ESteamNetworkingConnectionState_FindingRoute: return "FindingRoute (2)";
+            case k_ESteamNetworkingConnectionState_Connected: return "Connected (3)";
+            case k_ESteamNetworkingConnectionState_ClosedByPeer: return "ClosedByPeer (4)";
+            case k_ESteamNetworkingConnectionState_ProblemDetectedLocally: return "ProblemDetectedLocally (5)";
+            case k_ESteamNetworkingConnectionState_FinWait: return "FinWait (6)";       // Usually not seen by app
+            case k_ESteamNetworkingConnectionState_Linger: return "Linger (7)";        // Usually not seen by app
+            case k_ESteamNetworkingConnectionState_Dead: return "Dead (8)";          // Usually not seen by app
+            default:
+                // Create a static buffer to hold unknown state string to avoid returning temporary
+                // or handle it differently if you expect many unknown values.
+                // For simplicity here, we'll just use a generic unknown.
+                // A more robust solution might use a thread-local static buffer if this function
+                // could be called from multiple threads simultaneously and you wanted to return
+                // "Unknown (value)". But for spdlog, this should be fine.
+                return "UnknownState";
+        }
+    }
+
+    const char* EResultToString(const EResult eResult)
+    {
+        switch (eResult)
+        {
+            case k_EResultOK: return "OK (1)";
+            case k_EResultFail: return "Fail (2)"; // Generic failure
+            case k_EResultNoConnection: return "NoConnection (3)"; // Not connected to Steam
+            case k_EResultInvalidParam: return "InvalidParam (8)"; // E.g., hConn was invalid
+            case k_EResultBusy: return "Busy (10)"; // System is busy, try again
+            case k_EResultInvalidState: return "InvalidState (11)"; // Operation not allowed in current state
+            case k_EResultAccessDenied: return "AccessDenied (15)"; // Operation denied
+            case k_EResultTimeout: return "Timeout (16)";
+            case k_EResultServiceUnavailable: return "ServiceUnavailable (20)";
+            case k_EResultNotLoggedOn: return "NotLoggedOn (21)";
+            case k_EResultPending: return "Pending (22)"; // Asynchronous operation is pending
+            case k_EResultLimitExceeded: return "LimitExceeded (25)"; // E.g., too many connections for this poll group / server
+                // Add more EResult codes here as you encounter them or deem them relevant
+                // from steamclientpublic.h (included via steam_gameserver.h)
+            default: return "Unknown/Other EResult";
+        }
+    }
+}
 
 // Helper function (can be in a utility header or static in the .cpp)
 inline uint32_t ManualNetToHost32(const uint8_t* network_bytes_in) {
@@ -56,7 +105,8 @@ bool Server::InitializeSteam(uint16_t usGamePort, uint16_t usQueryPort, const ch
     SteamGameServer()->SetProduct("MyAwesomeGame");
     SteamGameServer()->SetGameDescription("Minimal Steamworks Server Example");
     SteamGameServer()->SetDedicatedServer(true);
-    SteamGameServer()->SetAdvertiseServerActive(true);
+    // Only LAN for demo
+    //SteamGameServer()->SetAdvertiseServerActive(true);
     SteamGameServer()->LogOnAnonymous(); // Or SteamGameServer()->LogOn( "YOUR_SERVER_TOKEN_HERE" ); for GSLT
 
     // Create a listen socket
@@ -144,7 +194,10 @@ void Server::ShutdownSteam() {
 
 void Server::RunCallbacks() {
     if (!m_bRunning) return;
-    SteamGameServer_RunCallbacks(); // Process Steam API callbacks
+
+    // Process Steam API callbacks
+    SteamGameServer_RunCallbacks();
+    PollNetwork();
 }
 
 void Server::PollNetwork() {
@@ -179,11 +232,15 @@ void Server::PollNetwork() {
 
 void Server::SendMessageToClient(HSteamNetConnection hConn, const std::string& message) {
     if (!m_pInterface) return;
-    EResult res = m_pInterface->SendMessageToConnection(hConn, message.c_str(), (uint32)message.length(), k_nSteamNetworkingSend_Reliable, nullptr);
-    if (res == k_EResultOK) {
-        // spdlog::info("Server: Sent message to {}: '{}'", hConn, message); // Can be spammy
-    } else {
-        spdlog::error("Server: Failed to send message to {}. Error: {}", hConn, res);
+
+    const EResult res = m_pInterface->SendMessageToConnection(hConn, message.c_str(), (uint32)message.length(), k_nSteamNetworkingSend_Reliable, nullptr);
+    if (res == k_EResultOK)
+    {
+        spdlog::info("Server: Sent message to {}: '{}'", hConn, message);
+    }
+    else
+    {
+        spdlog::error("Server: Failed to send message to {}. Error: {}", hConn, EResultToString(res));
     }
 }
 
@@ -205,7 +262,7 @@ void Server::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
     ESteamNetworkingConnectionState eNewState = info.m_eState;
 
     spdlog::info("Server: Connection status changed for {}. Old: {}, New: {}, EndReason: {}, Desc: '{}'",
-                 hConn, eOldState, eNewState, info.m_eEndReason, info.m_szEndDebug);
+                 hConn, ConnectionStateToString(eOldState), ConnectionStateToString(eNewState), info.m_eEndReason, info.m_szEndDebug);
 
     std::lock_guard<std::mutex> lock(m_mutexClientData);
 
@@ -221,7 +278,7 @@ void Server::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
                 return;
             }
 
-            EResult res = m_pInterface->AcceptConnection(hConn);
+            const EResult res = m_pInterface->AcceptConnection(hConn);
             if (res == k_EResultOK) {
                 if (!m_pInterface->SetConnectionPollGroup(hConn, m_hPollGroup)) {
                      spdlog::warn("Server: Failed to add connection {} to poll group.", hConn);
@@ -235,7 +292,7 @@ void Server::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
                 // TODO : fix below
                 //spdlog::info("Server: Accepted connection from {}. Added to map. Total clients: {}", SteamNetworkingIPAddr_ToString(info.m_addrRemote, true), m_mapClientData.size());
             } else {
-                spdlog::error("Server: Failed to accept connection {}. Error: {}", hConn, res);
+                spdlog::error("Server: Failed to accept connection {}. Error: {}", hConn, EResultToString(res));
                 m_pInterface->CloseConnection(hConn, 0, "Accept failed", false); // Clean up
             }
         } else {
@@ -247,10 +304,13 @@ void Server::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
             // The m_identityRemote is available in info struct on connected state.
             // However, for BeginAuthSession, we need the client to send us their auth ticket first.
             // The SteamID from info.m_identityRemote is what we expect to be authenticated.
-            if (!info.m_identityRemote.IsInvalid()) {
+            if (!info.m_identityRemote.IsInvalid())
+            {
                  m_mapClientData[hConn].m_steamID = info.m_identityRemote.GetSteamID();
                  spdlog::info("Server: Connection {} ({}) is now fully connected. Waiting for auth ticket.", hConn, m_mapClientData[hConn].m_steamID.ConvertToUint64());
-            } else {
+            }
+            else
+            {
                  spdlog::warn("Server: Connection {} connected but has invalid remote identity.", hConn);
                  // This might happen if connecting not through Steam relay or not a Steam user
                  // For this example, we expect Steam users.
@@ -260,7 +320,9 @@ void Server::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
             }
             // Send a welcome message; client should respond with auth ticket
             SendMessageToClient(hConn, "WELCOME_SEND_AUTH_TICKET");
-        } else {
+        }
+        else
+        {
             spdlog::warn("Server: Connection {} reported 'Connected' but not in our map. This shouldn't happen if accept logic is correct.", hConn);
         }
     } else if (eNewState == k_ESteamNetworkingConnectionState_ClosedByPeer ||

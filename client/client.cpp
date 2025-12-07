@@ -5,6 +5,55 @@
 
 constexpr uint32 MAX_MESSAGES_PER_POLL = 20;
 
+namespace
+{
+    static const char* ConnectionStateToString(const ESteamNetworkingConnectionState eState)
+    {
+        switch (eState)
+        {
+        case k_ESteamNetworkingConnectionState_None: return "None (0)";
+        case k_ESteamNetworkingConnectionState_Connecting: return "Connecting (1)";
+        case k_ESteamNetworkingConnectionState_FindingRoute: return "FindingRoute (2)";
+        case k_ESteamNetworkingConnectionState_Connected: return "Connected (3)";
+        case k_ESteamNetworkingConnectionState_ClosedByPeer: return "ClosedByPeer (4)";
+        case k_ESteamNetworkingConnectionState_ProblemDetectedLocally: return "ProblemDetectedLocally (5)";
+        case k_ESteamNetworkingConnectionState_FinWait: return "FinWait (6)";       // Usually not seen by app
+        case k_ESteamNetworkingConnectionState_Linger: return "Linger (7)";        // Usually not seen by app
+        case k_ESteamNetworkingConnectionState_Dead: return "Dead (8)";          // Usually not seen by app
+        default:
+            // Create a static buffer to hold unknown state string to avoid returning temporary
+            // or handle it differently if you expect many unknown values.
+            // For simplicity here, we'll just use a generic unknown.
+            // A more robust solution might use a thread-local static buffer if this function
+            // could be called from multiple threads simultaneously and you wanted to return
+            // "Unknown (value)". But for spdlog, this should be fine.
+            return "UnknownState";
+        }
+    }
+
+    const char* EResultToString(const EResult eResult)
+    {
+        switch (eResult)
+        {
+        case k_EResultOK: return "OK (1)";
+        case k_EResultFail: return "Fail (2)"; // Generic failure
+        case k_EResultNoConnection: return "NoConnection (3)"; // Not connected to Steam
+        case k_EResultInvalidParam: return "InvalidParam (8)"; // E.g., hConn was invalid
+        case k_EResultBusy: return "Busy (10)"; // System is busy, try again
+        case k_EResultInvalidState: return "InvalidState (11)"; // Operation not allowed in current state
+        case k_EResultAccessDenied: return "AccessDenied (15)"; // Operation denied
+        case k_EResultTimeout: return "Timeout (16)";
+        case k_EResultServiceUnavailable: return "ServiceUnavailable (20)";
+        case k_EResultNotLoggedOn: return "NotLoggedOn (21)";
+        case k_EResultPending: return "Pending (22)"; // Asynchronous operation is pending
+        case k_EResultLimitExceeded: return "LimitExceeded (25)"; // E.g., too many connections for this poll group / server
+            // Add more EResult codes here as you encounter them or deem them relevant
+            // from steamclientpublic.h (included via steam_gameserver.h)
+        default: return "Unknown/Other EResult";
+        }
+    }
+}
+
 inline void ManualHostToNet32(uint32_t host_value, uint8_t* network_bytes_out) {
     network_bytes_out[0] = (host_value >> 24) & 0xFF;
     network_bytes_out[1] = (host_value >> 16) & 0xFF;
@@ -93,7 +142,14 @@ bool Client::Connect(const char* serverAddress, uint16 serverPort) {
 
     spdlog::info("Client: Attempting to connect to server {}:{}", serverAddress, serverPort);
     // No custom options needed for this minimal example if relying on STEAM_CALLBACK
-    m_hConnection = m_pInterface->ConnectByIPAddress(serverAddr, 0, nullptr);
+
+    // WITHOUT AUTHENTICATION
+    SteamNetworkingConfigValue_t arrConnectionOptions[1];
+    arrConnectionOptions[0].SetInt32(k_ESteamNetworkingConfig_IP_AllowWithoutAuth, 1);
+    m_hConnection = m_pInterface->ConnectByIPAddress(serverAddr, 1, arrConnectionOptions);
+
+    // WITH AUTHENTICATION
+    //m_hConnection = m_pInterface->ConnectByIPAddress(serverAddr, 0, nullptr);
 
     if (m_hConnection == k_HSteamNetConnection_Invalid) {
         spdlog::error("Client: Failed to initiate connection.");
@@ -188,29 +244,11 @@ bool Client::IsAttemptingConnection() const
     return m_bAttemptingConnection;
 }
 
-// This is the C-style callback, dispatching to the member function
-void Client::SteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pCallback) {
-    // We need to find the Client instance. This is tricky without global state or a map.
-    // For this minimal example, if we only have one client instance, we might get away
-    // with a static pointer, but that's not ideal.
-    // A better way for multi-instance would be a static map of HSteamNetConnection to Client*.
-    // For now, assuming a single global-like Client instance handled by main.
-    // This part needs a proper way to get the `this` pointer if Client object isn't singleton-like.
-    // If client_main creates one Client, it can call this method on it.
-    // Or, the callback struct can be a member of Client:
-    // CCallback<MyClass, SteamNetConnectionStatusChangedCallback_t, false> m_SteamNetConnectionStatusChangedCallback;
-    // m_SteamNetConnectionStatusChangedCallback.Register(this, &MyClass::OnSteamNetConnectionStatusChanged);
-    // But this example uses STEAM_CALLBACK.
-
-    // The STEAM_CALLBACK macro handles this dispatch for us if it's a member.
-    OnSteamNetConnectionStatusChanged(pCallback);
-}
-
 void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pCallback) {
     spdlog::info("Client: Connection status changed. Conn: {}, PrevState: {}, State: {}, EndReason: {}",
                  pCallback->m_hConn,
-                 pCallback->m_eOldState,
-                 pCallback->m_info.m_eState,
+                 ConnectionStateToString(pCallback->m_eOldState),
+                 ConnectionStateToString(pCallback->m_info.m_eState),
                  pCallback->m_info.m_eEndReason);
 
     // Is this connection our HSteamNetConnection?
@@ -220,7 +258,9 @@ void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
             case k_ESteamNetworkingConnectionState_ClosedByPeer:
             case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
                 spdlog::info("Client: Connection closed or failed. Reason: {}. Info: {}", pCallback->m_info.m_eEndReason, pCallback->m_info.m_szEndDebug);
-                if (m_hConnection == pCallback->m_hConn) { // Check if it's our active connection
+                if (m_hConnection == pCallback->m_hConn)
+                {
+                    // Check if it's our active connection
                     m_pInterface->CloseConnection(pCallback->m_hConn, 0, nullptr, false);
                     m_hConnection = k_HSteamNetConnection_Invalid;
                     m_bConnected = false;
@@ -246,6 +286,7 @@ void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
                 // Start a thread to poll for messages
                 // Note: This is a simple approach. A more robust system might integrate polling into the main loop
                 // or use a dedicated I/O service.
+                /*
                 if (m_networkThread.joinable()) m_networkThread.join(); // Should not happen if logic is correct
                 m_networkThread = std::thread([this]() {
                     while (m_bRunning && m_bConnected) {
@@ -254,6 +295,7 @@ void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
                     }
                     spdlog::info("Client: Network polling thread exiting.");
                 });
+                */
                 break;
         }
     }
