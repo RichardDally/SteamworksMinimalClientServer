@@ -379,7 +379,26 @@ void Server::ProcessMessageFromClient(HSteamNetConnection hConn, const uint8* da
                 // Copy the actual ticket data, which starts after the 4-byte size field
                 memcpy(clientData.m_authTicketData.data(), data + sizeof(uint32), ticketDataSize);
                 clientData.m_eAuthState = ClientConnectionData_t::AUTH_TICKET_RECEIVED;
-                // ... (rest of the logic) ...
+
+                spdlog::info("=== Step 5: Received auth ticket from client {} ({} bytes) ===", hConn, ticketDataSize);
+                spdlog::info("=== Step 6: Validating auth ticket with Steam ===");
+
+                // Call BeginAuthSession to validate the ticket with Steam
+                EBeginAuthSessionResult authResult = SteamGameServer()->BeginAuthSession(
+                    clientData.m_authTicketData.data(),
+                    ticketDataSize,
+                    clientData.m_steamID
+                );
+
+                if (authResult == k_EBeginAuthSessionResultOK) {
+                    spdlog::info("Server: BeginAuthSession returned OK for client {} (SteamID {}). Waiting for ValidateAuthTicketResponse callback.",
+                                 hConn, clientData.m_steamID.ConvertToUint64());
+                } else {
+                    spdlog::error("Server: BeginAuthSession failed for client {} (SteamID {}). Result: {}",
+                                  hConn, clientData.m_steamID.ConvertToUint64(), static_cast<int>(authResult));
+                    clientData.m_eAuthState = ClientConnectionData_t::AUTH_FAILED;
+                    SendMessageToClient(hConn, "AUTH_FAILED");
+                }
             }
             else {
                 spdlog::warn("Server: Received malformed auth ticket message from {}. Size in msg: {}, Total msg size: {}.", hConn, ticketDataSize, size);

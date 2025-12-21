@@ -24,11 +24,12 @@ public:
 
     bool IsConnected() const;
     bool IsAttemptingConnection() const;
+    bool IsAuthenticated() const;
+    void PollIncomingMessages();
 
 private:
     STEAM_CALLBACK(Client, OnSteamNetConnectionStatusChanged, SteamNetConnectionStatusChangedCallback_t);
 
-    void PollIncomingMessages();
     void ProcessMessage(const uint8* data, uint32 size);
 
     HSteamNetConnection m_hConnection;
@@ -36,6 +37,7 @@ private:
     HAuthTicket m_hAuthTicket;
     std::atomic<bool> m_bConnected;
     std::atomic<bool> m_bAttemptingConnection;
+    std::atomic<bool> m_bAuthenticated;
     std::thread m_networkThread;
     std::atomic<bool> m_bRunning;
 

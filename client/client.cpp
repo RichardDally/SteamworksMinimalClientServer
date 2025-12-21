@@ -67,6 +67,7 @@ Client::Client()
       m_hAuthTicket(k_HAuthTicketInvalid),
       m_bConnected(false),
       m_bAttemptingConnection(false),
+      m_bAuthenticated(false),
       m_bRunning(false),
       m_unAuthTicketSize(0) {
     m_authTicketBuffer.resize(m_unAuthTicketBufferSize);
@@ -140,7 +141,7 @@ bool Client::Connect(const char* serverAddress, uint16 serverPort) {
     }
     serverAddr.m_port = serverPort;
 
-    spdlog::info("Client: Attempting to connect to server {}:{}", serverAddress, serverPort);
+    spdlog::info("=== Step 1: Initiating connection to server {}:{} ===", serverAddress, serverPort);
     // No custom options needed for this minimal example if relying on STEAM_CALLBACK
 
     // WITHOUT AUTHENTICATION
@@ -200,9 +201,18 @@ void Client::ProcessMessage(const uint8* data, uint32 size) {
     std::string message(reinterpret_cast<const char*>(data), size);
     spdlog::info("Client: Received message from server: '{}'", message);
 
+    // Check for authentication success (Step 5 & 6 happen on server side)
+    if (message.rfind("AUTH_SUCCESSFUL", 0) == 0) {
+        spdlog::info("=== Step 7: Received AUTH_SUCCESSFUL from server ===");
+        spdlog::info("=== Authentication complete! Client is now authenticated ===");
+        m_bAuthenticated = true;
+        return;
+    }
+
     // Example: if server sends "WELCOME", client sends "HELLO_SERVER_AUTH_TICKET"
     if (message.rfind("WELCOME", 0) == 0) {
-        spdlog::info("Client: Server welcomed us. Sending auth ticket.");
+        spdlog::info("=== Step 3: Received WELCOME from server ===");
+        spdlog::info("=== Step 4: Sending auth ticket to server ===");
         std::vector<uint8> ticketMessage;
         ticketMessage.resize(sizeof(uint32) + m_unAuthTicketSize);
 
@@ -244,6 +254,11 @@ bool Client::IsAttemptingConnection() const
     return m_bAttemptingConnection;
 }
 
+bool Client::IsAuthenticated() const
+{
+    return m_bAuthenticated;
+}
+
 void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pCallback) {
     spdlog::info("Client: Connection status changed. Conn: {}, PrevState: {}, State: {}, EndReason: {}",
                  pCallback->m_hConn,
@@ -278,7 +293,7 @@ void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
                 break;
 
             case k_ESteamNetworkingConnectionState_Connected:
-                spdlog::info("Client: Successfully connected to server!");
+                spdlog::info("=== Step 2: Connection established with server ===");
                 m_bConnected = true;
                 m_bAttemptingConnection = false;
                 m_hConnection = pCallback->m_hConn; // Ensure we store the actual connection handle

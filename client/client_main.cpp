@@ -59,6 +59,7 @@ int main()
     while (run.load() && (client.IsConnected() || client.IsAttemptingConnection()) )
     { // Use m_bAttemptingConnection to keep running while trying
         client.RunCallbacks(); // Process Steam API callbacks
+        client.PollIncomingMessages(); // Process incoming messages from server
 
         // Non-blocking input check (simple version)
         // For a real game, use a proper input library or game loop structure
@@ -71,10 +72,19 @@ int main()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(30)); // Keep main thread responsive
 
-        // Simulate some activity or keep alive
-        // if (client.IsConnected()) {
-        //    // client.SendMessageToServer("PING"); // Be careful not to spam
-        // }
+        static auto lastPingTime = std::chrono::steady_clock::now();
+        static bool firstPing = true;
+        auto now = std::chrono::steady_clock::now();
+        if (client.IsAuthenticated() &&
+            std::chrono::duration_cast<std::chrono::seconds>(now - lastPingTime).count() >= 5)
+        {
+            if (firstPing) {
+                spdlog::info("=== Step 8: Starting periodic pings (every 2 seconds) ===");
+                firstPing = false;
+            }
+            client.SendMessageToServer("PING");
+            lastPingTime = now;
+        }
     }
     run.store(false);
     cinThread.join();
