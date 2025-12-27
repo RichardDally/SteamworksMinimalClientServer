@@ -57,7 +57,6 @@ private:
     STEAM_GAMESERVER_CALLBACK(Server, OnSteamServerConnectFailure, SteamServerConnectFailure_t);
 
 
-    void HandleClientConnection(HSteamNetConnection hConn);
     void HandleClientDisconnection(HSteamNetConnection hConn, const SteamNetConnectionInfo_t& info);
     void ProcessMessageFromClient(HSteamNetConnection hConn, const uint8* data, uint32 size);
 
